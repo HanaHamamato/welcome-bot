@@ -11,7 +11,9 @@ const {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
   ]
 });
 
@@ -23,7 +25,6 @@ const client = new Client({
 const CLIENT_ID = "1473707696623583243";
 
 // Add role IDs here if you want special roles allowed to use /kick
-// Leave empty [] if you want ADMIN only
 const ALLOWED_ROLE_IDS = [
   // "ROLE_ID_HERE"
 ];
@@ -32,13 +33,19 @@ const ALLOWED_ROLE_IDS = [
 const WELCOME_CHANNEL_ID = "1473353851305197870";
 
 /* ===========================
+   AFK STORAGE
+=========================== */
+
+const afkUsers = new Map(); 
+// userId => { reason, since }
+
+/* ===========================
    BOT READY
 =========================== */
 
 client.once("clientReady", async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
-  // Register /kick slash command
   const kickCommand = new SlashCommandBuilder()
     .setName("kick")
     .setDescription("Kick a member from the server")
@@ -55,14 +62,24 @@ client.once("clientReady", async () => {
         .setRequired(false)
     );
 
+  const afkCommand = new SlashCommandBuilder()
+    .setName("afk")
+    .setDescription("Set yourself as AFK")
+    .addStringOption(option =>
+      option
+        .setName("reason")
+        .setDescription("Reason for going AFK")
+        .setRequired(false)
+    );
+
   const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
   try {
     await rest.put(
       Routes.applicationCommands(CLIENT_ID),
-      { body: [kickCommand.toJSON()] }
+      { body: [kickCommand.toJSON(), afkCommand.toJSON()] }
     );
-    console.log("✅ Slash command registered");
+    console.log("✅ Slash commands registered");
   } catch (err) {
     console.error(err);
   }
@@ -86,19 +103,19 @@ client.on("guildMemberAdd", member => {
 });
 
 /* ===========================
-   KICK COMMAND
+   SLASH COMMANDS
 =========================== */
 
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
+  /* ========= KICK ========= */
   if (interaction.commandName === "kick") {
     const member = interaction.member;
     const target = interaction.options.getMember("user");
     const reason =
       interaction.options.getString("reason") || "No reason provided";
 
-    // Check permissions
     const isAdmin = member.permissions.has(
       PermissionsBitField.Flags.Administrator
     );
@@ -134,6 +151,50 @@ client.on("interactionCreate", async interaction => {
       `👢 **${target.user.tag}** was kicked.\n📝 Reason: ${reason}`
     );
   }
+
+  /* ========= AFK ========= */
+  if (interaction.commandName === "afk") {
+    const reason = interaction.options.getString("reason") || "AFK";
+    const userId = interaction.user.id;
+
+    afkUsers.set(userId, {
+      reason: reason,
+      since: Date.now()
+    });
+
+    return interaction.reply({
+      content: `🌙 You are now AFK.\n📝 Reason: ${reason}`,
+      ephemeral: false
+    });
+  }
+});
+
+/* ===========================
+   AFK MESSAGE HANDLER
+=========================== */
+
+client.on("messageCreate", async message => {
+  if (message.author.bot) return;
+
+  // Remove AFK when user speaks again
+  if (afkUsers.has(message.author.id)) {
+    afkUsers.delete(message.author.id);
+    message.reply("✨ Welcome back! Your AFK status has been removed.");
+  }
+
+  // Check mentions
+  message.mentions.users.forEach(user => {
+    if (afkUsers.has(user.id)) {
+      const afkData = afkUsers.get(user.id);
+
+      message.reply(
+        `🚫 **${user.tag}** is currently AFK.\n📝 Reason: ${afkData.reason}`
+      );
+
+      // Delete the message to block mention
+      message.delete().catch(() => {});
+    }
+  });
 });
 
 /* ===========================
