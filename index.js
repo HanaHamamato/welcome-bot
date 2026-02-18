@@ -21,23 +21,19 @@ const client = new Client({
    CONFIG
 =========================== */
 
-// Your Application ID
 const CLIENT_ID = "1473707696623583243";
 
-// Add role IDs here if you want special roles allowed to use /kick
 const ALLOWED_ROLE_IDS = [
   // "ROLE_ID_HERE"
 ];
 
-// Welcome channel ID
 const WELCOME_CHANNEL_ID = "1473353851305197870";
 
 /* ===========================
    AFK STORAGE
 =========================== */
 
-const afkUsers = new Map(); 
-// userId => { reason, since }
+const afkUsers = new Map();
 
 /* ===========================
    BOT READY
@@ -50,39 +46,37 @@ client.once("clientReady", async () => {
     .setName("kick")
     .setDescription("Kick a member from the server")
     .addUserOption(option =>
-      option
-        .setName("user")
-        .setDescription("User to kick")
-        .setRequired(true)
+      option.setName("user").setDescription("User to kick").setRequired(true)
     )
     .addStringOption(option =>
-      option
-        .setName("reason")
-        .setDescription("Reason for kick")
-        .setRequired(false)
+      option.setName("reason").setDescription("Reason").setRequired(false)
     );
 
   const afkCommand = new SlashCommandBuilder()
     .setName("afk")
     .setDescription("Set yourself as AFK")
     .addStringOption(option =>
+      option.setName("reason").setDescription("Reason").setRequired(false)
+    );
+
+  const clearCommand = new SlashCommandBuilder()
+    .setName("clear")
+    .setDescription("Clear messages from the channel")
+    .addStringOption(option =>
       option
-        .setName("reason")
-        .setDescription("Reason for going AFK")
-        .setRequired(false)
+        .setName("amount")
+        .setDescription("Number (1–100) or 'all'")
+        .setRequired(true)
     );
 
   const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
-  try {
-    await rest.put(
-      Routes.applicationCommands(CLIENT_ID),
-      { body: [kickCommand.toJSON(), afkCommand.toJSON()] }
-    );
-    console.log("✅ Slash commands registered");
-  } catch (err) {
-    console.error(err);
-  }
+  await rest.put(
+    Routes.applicationCommands(CLIENT_ID),
+    { body: [kickCommand, afkCommand, clearCommand].map(c => c.toJSON()) }
+  );
+
+  console.log("✅ Slash commands registered");
 });
 
 /* ===========================
@@ -113,58 +107,46 @@ client.on("interactionCreate", async interaction => {
   if (interaction.commandName === "kick") {
     const member = interaction.member;
     const target = interaction.options.getMember("user");
-    const reason =
-      interaction.options.getString("reason") || "No reason provided";
+    const reason = interaction.options.getString("reason") || "No reason";
 
-    const isAdmin = member.permissions.has(
-      PermissionsBitField.Flags.Administrator
-    );
+    const isAdmin = member.permissions.has(PermissionsBitField.Flags.Administrator);
+    const hasAllowedRole = ALLOWED_ROLE_IDS.some(id => member.roles.cache.has(id));
 
-    const hasAllowedRole = ALLOWED_ROLE_IDS.some(roleId =>
-      member.roles.cache.has(roleId)
-    );
+    if (!isAdmin && !hasAllowedRole)
+      return interaction.reply({ content: "❌ No permission.", ephemeral: true });
 
-    if (!isAdmin && !hasAllowedRole) {
-      return interaction.reply({
-        content: "❌ You do not have permission to use this command.",
-        ephemeral: true
-      });
-    }
-
-    if (!target) {
-      return interaction.reply({
-        content: "❌ User not found.",
-        ephemeral: true
-      });
-    }
-
-    if (!target.kickable) {
-      return interaction.reply({
-        content: "❌ I cannot kick this user (role may be higher than mine).",
-        ephemeral: true
-      });
-    }
+    if (!target || !target.kickable)
+      return interaction.reply({ content: "❌ Cannot kick user.", ephemeral: true });
 
     await target.kick(reason);
-
-    await interaction.reply(
-      `👢 **${target.user.tag}** was kicked.\n📝 Reason: ${reason}`
-    );
+    return interaction.reply(`👢 **${target.user.tag}** kicked.\n📝 ${reason}`);
   }
 
   /* ========= AFK ========= */
   if (interaction.commandName === "afk") {
     const reason = interaction.options.getString("reason") || "AFK";
-    const userId = interaction.user.id;
+    afkUsers.set(interaction.user.id, { reason, since: Date.now() });
 
-    afkUsers.set(userId, {
-      reason: reason,
-      since: Date.now()
-    });
+    return interaction.reply(`🌙 You are now AFK.\n📝 ${reason}`);
+  }
 
+  /* ========= CLEAR ========= */
+  if (interaction.commandName === "clear") {
+    if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageMessages))
+      return interaction.reply({ content: "❌ You need Manage Messages.", ephemeral: true });
+
+    const input = interaction.options.getString("amount");
+
+    let amount =
+      input === "all" ? 100 : parseInt(input);
+
+    if (isNaN(amount) || amount < 1 || amount > 100)
+      return interaction.reply({ content: "❌ Use 1–100 or `all`.", ephemeral: true });
+
+    const messages = await interaction.channel.bulkDelete(amount, true);
     return interaction.reply({
-      content: `🌙 You are now AFK.\n📝 Reason: ${reason}`,
-      ephemeral: false
+      content: `🧹 Cleared **${messages.size}** messages.`,
+      ephemeral: true
     });
   }
 });
@@ -176,22 +158,15 @@ client.on("interactionCreate", async interaction => {
 client.on("messageCreate", async message => {
   if (message.author.bot) return;
 
-  // Remove AFK when user speaks again
   if (afkUsers.has(message.author.id)) {
     afkUsers.delete(message.author.id);
-    message.reply("✨ Welcome back! Your AFK status has been removed.");
+    message.reply("✨ Welcome back! AFK removed.");
   }
 
-  // Check mentions
   message.mentions.users.forEach(user => {
     if (afkUsers.has(user.id)) {
-      const afkData = afkUsers.get(user.id);
-
-      message.reply(
-        `🚫 **${user.tag}** is currently AFK.\n📝 Reason: ${afkData.reason}`
-      );
-
-      // Delete the message to block mention
+      const afk = afkUsers.get(user.id);
+      message.reply(`🚫 **${user.tag}** is AFK.\n📝 ${afk.reason}`);
       message.delete().catch(() => {});
     }
   });
