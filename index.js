@@ -22,11 +22,9 @@ const client = new Client({
 =========================== */
 
 const CLIENT_ID = "1473707696623583243";
+const GUILD_ID = "1473276487758254261"; // 🔴 ONLY THING YOU MUST CHANGE
 
-const ALLOWED_ROLE_IDS = [
-  // "ROLE_ID_HERE"
-];
-
+const ALLOWED_ROLE_IDS = [];
 const WELCOME_CHANNEL_ID = "1473353851305197870";
 
 /* ===========================
@@ -63,20 +61,17 @@ client.once("clientReady", async () => {
     .setName("clear")
     .setDescription("Clear messages from the channel")
     .addStringOption(option =>
-      option
-        .setName("amount")
-        .setDescription("Number (1–100) or 'all'")
-        .setRequired(true)
+      option.setName("amount").setDescription("1–100 or 'all'").setRequired(true)
     );
 
   const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
   await rest.put(
-    Routes.applicationCommands(CLIENT_ID),
+    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
     { body: [kickCommand, afkCommand, clearCommand].map(c => c.toJSON()) }
   );
 
-  console.log("✅ Slash commands registered");
+  console.log("✅ GUILD slash commands registered (instant)");
 });
 
 /* ===========================
@@ -103,7 +98,6 @@ client.on("guildMemberAdd", member => {
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  /* ========= KICK ========= */
   if (interaction.commandName === "kick") {
     const member = interaction.member;
     const target = interaction.options.getMember("user");
@@ -122,32 +116,24 @@ client.on("interactionCreate", async interaction => {
     return interaction.reply(`👢 **${target.user.tag}** kicked.\n📝 ${reason}`);
   }
 
-  /* ========= AFK ========= */
   if (interaction.commandName === "afk") {
     const reason = interaction.options.getString("reason") || "AFK";
     afkUsers.set(interaction.user.id, { reason, since: Date.now() });
-
     return interaction.reply(`🌙 You are now AFK.\n📝 ${reason}`);
   }
 
-  /* ========= CLEAR ========= */
   if (interaction.commandName === "clear") {
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageMessages))
-      return interaction.reply({ content: "❌ You need Manage Messages.", ephemeral: true });
+      return interaction.reply({ content: "❌ Need Manage Messages.", ephemeral: true });
 
     const input = interaction.options.getString("amount");
-
-    let amount =
-      input === "all" ? 100 : parseInt(input);
+    const amount = input === "all" ? 100 : parseInt(input);
 
     if (isNaN(amount) || amount < 1 || amount > 100)
       return interaction.reply({ content: "❌ Use 1–100 or `all`.", ephemeral: true });
 
-    const messages = await interaction.channel.bulkDelete(amount, true);
-    return interaction.reply({
-      content: `🧹 Cleared **${messages.size}** messages.`,
-      ephemeral: true
-    });
+    const deleted = await interaction.channel.bulkDelete(amount, true);
+    return interaction.reply({ content: `🧹 Cleared **${deleted.size}** messages.`, ephemeral: true });
   }
 });
 
