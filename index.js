@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const {
   Client,
   GatewayIntentBits,
@@ -22,7 +24,7 @@ const client = new Client({
 =========================== */
 
 const CLIENT_ID = "1473707696623583243";
-const GUILD_ID = "1473276487758254261"; // 🔴 ONLY THING YOU MUST CHANGE
+const GUILD_ID = "1473276487758254261";
 
 const ALLOWED_ROLE_IDS = [];
 const WELCOME_CHANNEL_ID = "1473353851305197870";
@@ -39,6 +41,18 @@ const afkUsers = new Map();
 
 client.once("clientReady", async () => {
   console.log(`Logged in as ${client.user.tag}`);
+
+  const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
+
+  // 🔥 STEP 1: DELETE OLD GLOBAL COMMANDS (REMOVES DUPLICATES)
+  await rest.put(
+    Routes.applicationCommands(CLIENT_ID),
+    { body: [] }
+  );
+
+  console.log("🗑️ Old GLOBAL commands deleted");
+
+  // STEP 2: Recreate commands properly (GUILD ONLY)
 
   const kickCommand = new SlashCommandBuilder()
     .setName("kick")
@@ -64,14 +78,12 @@ client.once("clientReady", async () => {
       option.setName("amount").setDescription("1–100 or 'all'").setRequired(true)
     );
 
-  const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
-
   await rest.put(
     Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
     { body: [kickCommand, afkCommand, clearCommand].map(c => c.toJSON()) }
   );
 
-  console.log("✅ GUILD slash commands registered (instant)");
+  console.log("✅ Guild slash commands registered correctly");
 });
 
 /* ===========================
@@ -130,7 +142,7 @@ client.on("interactionCreate", async interaction => {
     const amount = input === "all" ? 100 : parseInt(input);
 
     if (isNaN(amount) || amount < 1 || amount > 100)
-      return interaction.reply({ content: "❌ Use 1–100 or `all`.", ephemeral: true });
+      return interaction.reply({ content: "❌ Use 1–100 or 'all'.", ephemeral: true });
 
     const deleted = await interaction.channel.bulkDelete(amount, true);
     return interaction.reply({ content: `🧹 Cleared **${deleted.size}** messages.`, ephemeral: true });
