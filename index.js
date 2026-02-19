@@ -7,7 +7,11 @@ const {
   PermissionsBitField,
   SlashCommandBuilder,
   REST,
-  Routes
+  Routes,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelType
 } = require("discord.js");
 
 const client = new Client({
@@ -26,17 +30,21 @@ const client = new Client({
 const CLIENT_ID = "1473707696623583243";
 const GUILD_ID = "1473276487758254261";
 
-const ALLOWED_ROLE_IDS = [];
 const WELCOME_CHANNEL_ID = "1473353851305197870";
+const TICKET_CATEGORY_ID = "1473675367750570056";
 
-/* ===========================
-   AFK STORAGE
-=========================== */
+const TICKET_PING_ROLES = [
+  "1473342873633161444",
+  "1473318391686107271",
+  "1473331282862674010",
+  "1473331472856518858",
+  "1473660986685657120"
+];
 
 const afkUsers = new Map();
 
 /* ===========================
-   BOT READY
+   REGISTER COMMANDS
 =========================== */
 
 client.once("clientReady", async () => {
@@ -44,50 +52,65 @@ client.once("clientReady", async () => {
 
   const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
-  // 🔥 STEP 1: DELETE OLD GLOBAL COMMANDS (REMOVES DUPLICATES)
-  await rest.put(
-    Routes.applicationCommands(CLIENT_ID),
-    { body: [] }
-  );
+  const commands = [
 
-  console.log("🗑️ Old GLOBAL commands deleted");
+    new SlashCommandBuilder()
+      .setName("kick")
+      .setDescription("Kick a member")
+      .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
+      .addStringOption(o => o.setName("reason").setDescription("Reason")),
 
-  // STEP 2: Recreate commands properly (GUILD ONLY)
+    new SlashCommandBuilder()
+      .setName("afk")
+      .setDescription("Set yourself AFK")
+      .addStringOption(o => o.setName("reason").setDescription("Reason")),
 
-  const kickCommand = new SlashCommandBuilder()
-    .setName("kick")
-    .setDescription("Kick a member from the server")
-    .addUserOption(option =>
-      option.setName("user").setDescription("User to kick").setRequired(true)
-    )
-    .addStringOption(option =>
-      option.setName("reason").setDescription("Reason").setRequired(false)
-    );
+    new SlashCommandBuilder()
+      .setName("clear")
+      .setDescription("Clear messages")
+      .addStringOption(o => o.setName("amount").setDescription("1-100 or all").setRequired(true)),
 
-  const afkCommand = new SlashCommandBuilder()
-    .setName("afk")
-    .setDescription("Set yourself as AFK")
-    .addStringOption(option =>
-      option.setName("reason").setDescription("Reason").setRequired(false)
-    );
+    new SlashCommandBuilder()
+      .setName("userinfo")
+      .setDescription("User info")
+      .addUserOption(o => o.setName("user").setDescription("User")),
 
-  const clearCommand = new SlashCommandBuilder()
-    .setName("clear")
-    .setDescription("Clear messages from the channel")
-    .addStringOption(option =>
-      option.setName("amount").setDescription("1–100 or 'all'").setRequired(true)
-    );
+    new SlashCommandBuilder()
+      .setName("embedannouncement")
+      .setDescription("Admin embed announcement")
+      .addStringOption(o => o.setName("title").setDescription("Title").setRequired(true))
+      .addStringOption(o => o.setName("message").setDescription("Message").setRequired(true))
+      .addStringOption(o => o.setName("color").setDescription("Hex color").setRequired(true))
+      .addStringOption(o => o.setName("image").setDescription("Optional image")),
+
+    new SlashCommandBuilder()
+      .setName("ticketmessage")
+      .setDescription("Send ticket panel")
+      .addStringOption(o => o.setName("title").setDescription("Embed title").setRequired(true))
+      .addStringOption(o => o.setName("message").setDescription("Embed message").setRequired(true))
+      .addStringOption(o => o.setName("buttoncolor").setDescription("green/red/blue").setRequired(true))
+      .addChannelOption(o => o.setName("channel").setDescription("Channel").setRequired(true)),
+
+    new SlashCommandBuilder()
+      .setName("ticketclose")
+      .setDescription("Close a ticket"),
+
+    new SlashCommandBuilder()
+      .setName("ticketdelete")
+      .setDescription("Delete a ticket")
+
+  ];
 
   await rest.put(
     Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-    { body: [kickCommand, afkCommand, clearCommand].map(c => c.toJSON()) }
+    { body: commands.map(c => c.toJSON()) }
   );
 
-  console.log("✅ Guild slash commands registered correctly");
+  console.log("✅ All commands registered.");
 });
 
 /* ===========================
-   WELCOME SYSTEM
+   WELCOME
 =========================== */
 
 client.on("guildMemberAdd", member => {
@@ -97,77 +120,164 @@ client.on("guildMemberAdd", member => {
   const embed = new EmbedBuilder()
     .setTitle("👋 Welcome!")
     .setDescription(`Hey ${member}, welcome to **${member.guild.name}** 💖`)
-    .setColor(0xff69b4)
-    .setImage("https://media.tenor.com/1iSR3yT5pWMAAAAC/anime-welcome.gif");
+    .setColor(0xff69b4);
 
   channel.send({ embeds: [embed] });
 });
 
 /* ===========================
-   SLASH COMMANDS
+   INTERACTIONS
 =========================== */
 
 client.on("interactionCreate", async interaction => {
+
+  /* ===== BUTTON CLICK (CREATE TICKET) ===== */
+  if (interaction.isButton() && interaction.customId === "create_ticket") {
+
+    const ticketChannel = await interaction.guild.channels.create({
+      name: `ticket-${interaction.user.username}`,
+      type: ChannelType.GuildText,
+      parent: TICKET_CATEGORY_ID,
+      permissionOverwrites: [
+        {
+          id: interaction.guild.roles.everyone.id,
+          deny: [PermissionsBitField.Flags.ViewChannel]
+        },
+        {
+          id: interaction.user.id,
+          allow: [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages,
+            PermissionsBitField.Flags.ReadMessageHistory
+          ]
+        },
+        ...TICKET_PING_ROLES.map(roleId => ({
+          id: roleId,
+          allow: [PermissionsBitField.Flags.ViewChannel]
+        }))
+      ]
+    });
+
+    await ticketChannel.send({
+      content: `${interaction.user} ${TICKET_PING_ROLES.map(r => `<@&${r}>`).join(" ")}`,
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("🎫 New Ticket")
+          .setDescription("Support will be with you shortly.")
+          .setColor(0x00ff99)
+      ]
+    });
+
+    return interaction.reply({ content: "✅ Ticket created!", ephemeral: true });
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
+  const isAdmin = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator);
+
+  /* ===== TICKET PANEL ===== */
+  if (interaction.commandName === "ticketmessage") {
+
+    if (!isAdmin) return interaction.reply({ content: "Admins only.", ephemeral: true });
+
+    const title = interaction.options.getString("title");
+    const message = interaction.options.getString("message");
+    const colorInput = interaction.options.getString("buttoncolor");
+    const channel = interaction.options.getChannel("channel");
+
+    let style = ButtonStyle.Primary;
+    if (colorInput.toLowerCase() === "green") style = ButtonStyle.Success;
+    if (colorInput.toLowerCase() === "red") style = ButtonStyle.Danger;
+
+    const embed = new EmbedBuilder()
+      .setTitle(title)
+      .setDescription(message)
+      .setColor(0x2b2d31);
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("create_ticket")
+        .setLabel("Create Ticket")
+        .setStyle(style)
+    );
+
+    await channel.send({ embeds: [embed], components: [row] });
+
+    return interaction.reply({ content: "✅ Ticket panel sent.", ephemeral: true });
+  }
+
+  /* ===== TICKET CLOSE ===== */
+  if (interaction.commandName === "ticketclose") {
+
+    if (!isAdmin) return interaction.reply({ content: "Admins only.", ephemeral: true });
+
+    await interaction.channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
+      ViewChannel: false
+    });
+
+    return interaction.reply("🔒 Ticket closed.");
+  }
+
+  /* ===== TICKET DELETE ===== */
+  if (interaction.commandName === "ticketdelete") {
+
+    if (!isAdmin) return interaction.reply({ content: "Admins only.", ephemeral: true });
+
+    await interaction.reply("🗑️ Deleting ticket...");
+    setTimeout(() => interaction.channel.delete(), 2000);
+  }
+
+  /* ===== KICK ===== */
   if (interaction.commandName === "kick") {
-    const member = interaction.member;
+
+    if (!isAdmin) return interaction.reply({ content: "Admins only.", ephemeral: true });
+
     const target = interaction.options.getMember("user");
     const reason = interaction.options.getString("reason") || "No reason";
 
-    const isAdmin = member.permissions.has(PermissionsBitField.Flags.Administrator);
-    const hasAllowedRole = ALLOWED_ROLE_IDS.some(id => member.roles.cache.has(id));
-
-    if (!isAdmin && !hasAllowedRole)
-      return interaction.reply({ content: "❌ No permission.", ephemeral: true });
-
     if (!target || !target.kickable)
-      return interaction.reply({ content: "❌ Cannot kick user.", ephemeral: true });
+      return interaction.reply({ content: "Cannot kick user.", ephemeral: true });
 
     await target.kick(reason);
-    return interaction.reply(`👢 **${target.user.tag}** kicked.\n📝 ${reason}`);
+    return interaction.reply(`👢 ${target.user.tag} kicked.`);
   }
 
+  /* ===== AFK ===== */
   if (interaction.commandName === "afk") {
-    const reason = interaction.options.getString("reason") || "AFK";
-    afkUsers.set(interaction.user.id, { reason, since: Date.now() });
-    return interaction.reply(`🌙 You are now AFK.\n📝 ${reason}`);
+    afkUsers.set(interaction.user.id, { reason: "AFK" });
+    return interaction.reply("🌙 You are now AFK.");
   }
 
+  /* ===== CLEAR ===== */
   if (interaction.commandName === "clear") {
-    if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageMessages))
-      return interaction.reply({ content: "❌ Need Manage Messages.", ephemeral: true });
+
+    if (!isAdmin) return interaction.reply({ content: "Admins only.", ephemeral: true });
 
     const input = interaction.options.getString("amount");
     const amount = input === "all" ? 100 : parseInt(input);
 
-    if (isNaN(amount) || amount < 1 || amount > 100)
-      return interaction.reply({ content: "❌ Use 1–100 or 'all'.", ephemeral: true });
-
     const deleted = await interaction.channel.bulkDelete(amount, true);
-    return interaction.reply({ content: `🧹 Cleared **${deleted.size}** messages.`, ephemeral: true });
-  }
-});
-
-/* ===========================
-   AFK MESSAGE HANDLER
-=========================== */
-
-client.on("messageCreate", async message => {
-  if (message.author.bot) return;
-
-  if (afkUsers.has(message.author.id)) {
-    afkUsers.delete(message.author.id);
-    message.reply("✨ Welcome back! AFK removed.");
+    return interaction.reply({ content: `🧹 Cleared ${deleted.size}`, ephemeral: true });
   }
 
-  message.mentions.users.forEach(user => {
-    if (afkUsers.has(user.id)) {
-      const afk = afkUsers.get(user.id);
-      message.reply(`🚫 **${user.tag}** is AFK.\n📝 ${afk.reason}`);
-      message.delete().catch(() => {});
-    }
-  });
+  /* ===== USERINFO ===== */
+  if (interaction.commandName === "userinfo") {
+
+    const target = interaction.options.getUser("user") || interaction.user;
+    const member = interaction.guild.members.cache.get(target.id);
+
+    const embed = new EmbedBuilder()
+      .setTitle("👤 User Info")
+      .setThumbnail(target.displayAvatarURL())
+      .addFields(
+        { name: "Username", value: target.tag, inline: true },
+        { name: "ID", value: target.id, inline: true }
+      )
+      .setColor(0x00bfff);
+
+    return interaction.reply({ embeds: [embed] });
+  }
+
 });
 
 /* ===========================
